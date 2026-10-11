@@ -236,6 +236,9 @@ jobs:
           echo "Checkout HEAD: $checkout_head"
           test "$checkout_head" = "$REQUEST_COMMIT"
           echo "Exact checkout verified."
+          # Reserve 15 minutes for evidence/artifacts before the 350-minute
+          # job deadline. No package admission or configuration changes.
+          echo "BUILD_EXECUTION_DEADLINE=$(( $(date +%s) + 335 * 60 ))" >> "$GITHUB_ENV"
 
       - name: Read Issue attachment or mobile request / 读取附件或手机请求
         env:
@@ -632,9 +635,17 @@ jobs:
             *) JOBS="${{ steps.req.outputs.compile_jobs }}" ;;
           esac
           echo "Compile jobs / 编译并发: $JOBS"
+          REMAINING=$(( BUILD_EXECUTION_DEADLINE - $(date +%s) ))
+          if [ "$REMAINING" -le 0 ]; then
+            echo "command_started=false" >> "$GITHUB_OUTPUT"
+            echo "exit_code=124" >> "$GITHUB_OUTPUT"
+            echo "::warning::Execution budget exhausted before compilation; preserving evidence. / 编译前执行时间已耗尽，保留日志。"
+            exit 124
+          fi
           set +e
           set -o pipefail
-          stdbuf -oL -eL make -j"$JOBS" BUILD_LOG=1 2>&1 |
+          echo "command_started=true" >> "$GITHUB_OUTPUT"
+          timeout --kill-after=30s "${REMAINING}s" stdbuf -oL -eL make -j"$JOBS" BUILD_LOG=1 2>&1 |
             tee "$GITHUB_WORKSPACE/build.log"
           RC=${PIPESTATUS[0]}
           echo "exit_code=$RC" >> "$GITHUB_OUTPUT"
@@ -648,29 +659,42 @@ jobs:
             echo "- Actions displays the live command output and saves it to \`build.log\`. / Actions 实时显示原始输出，并保存到 \`build.log\`。"
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ "$RC" -ne 0 ]; then
+          if [ "$RC" -eq 124 ]; then
+            echo "::warning::Compilation reached the execution deadline; no retry will start. / 编译已达到执行时间上限，不再启动重试。"
+          elif [ "$RC" -ne 0 ]; then
             echo "::error::Parallel compilation failed; the original workspace will be captured before single-thread diagnosis. / 并行编译失败，将先冻结原始现场，再进入单线程诊断。"
           fi
           exit "$RC"
 
       - name: Snapshot parallel failure / 冻结并行失败现场
-        if: steps.compile.outcome == 'failure'
+        if: always() && (steps.compile.outcome == 'failure' || steps.compile.outcome == 'cancelled')
         run: |
           "$GITHUB_WORKSPACE/Shell/collect-build-evidence.sh" snapshot parallel \
             "$GITHUB_WORKSPACE/build.log" "$GITHUB_WORKSPACE/openwrt" "$GITHUB_WORKSPACE/failure-logs"
-          rm -rf "$GITHUB_WORKSPACE/openwrt/logs"
+          if [ "${{ steps.compile.outcome }}" = "failure" ] && [ "${{ steps.compile.outputs.exit_code }}" != "124" ]; then
+            rm -rf "$GITHUB_WORKSPACE/openwrt/logs"
+          fi
 
       - name: Diagnose failed compile / 单线程定位失败原因
         id: diagnose
-        if: steps.compile.outcome == 'failure'
+        if: ${{ !cancelled() && steps.compile.outcome == 'failure' && steps.compile.outputs.exit_code != '124' }}
         continue-on-error: true
         timeout-minutes: 185
         run: |
           cd openwrt
-          echo "Single-thread retry / 单线程重试: make -j1 V=s BUILD_LOG=1 (180-minute limit)"
+          REMAINING=$(( BUILD_EXECUTION_DEADLINE - $(date +%s) ))
+          LIMIT=$(( REMAINING < 180 * 60 ? REMAINING : 180 * 60 ))
+          if [ "$LIMIT" -le 0 ]; then
+            echo "command_started=false" >> "$GITHUB_OUTPUT"
+            echo "exit_code=124" >> "$GITHUB_OUTPUT"
+            echo "::warning::No execution budget remains for retry. / 已无单线程重试时间。"
+            exit 124
+          fi
+          echo "Single-thread retry / 单线程重试: make -j1 V=s BUILD_LOG=1 (${LIMIT}-second budget)"
           set +e
           set -o pipefail
-          timeout 180m stdbuf -oL -eL make -j1 V=s BUILD_LOG=1 2>&1 |
+          echo "command_started=true" >> "$GITHUB_OUTPUT"
+          timeout --kill-after=30s "${LIMIT}s" stdbuf -oL -eL make -j1 V=s BUILD_LOG=1 2>&1 |
             tee "$GITHUB_WORKSPACE/build-diagnostic.log"
           RC=${PIPESTATUS[0]}
           echo "exit_code=$RC" >> "$GITHUB_OUTPUT"
@@ -679,14 +703,14 @@ jobs:
             echo "### 🔎 Single-thread retry / 单线程重试"
             echo ""
             echo "- command: \`make -j1 V=s BUILD_LOG=1\`"
-            echo "- limit: \`180 minutes\`"
+            echo "- limit: \`$LIMIT seconds\` (at most 180 minutes, within the remaining job budget)"
             echo "- exit code: \`$RC\`"
             echo "- log: \`build-diagnostic.log\`"
             echo "- result: exit 0 resumes the build; 124 means timeout; other non-zero exits remain failed."
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
           if [ "$RC" -eq 124 ]; then
-            echo "::warning::The single-thread retry exceeded 180 minutes and was stopped; see diagnostic/. / 单线程重试超过 180 分钟，已停止；请查看 diagnostic/。"
+            echo "::warning::The single-thread retry reached its execution deadline; see diagnostic/. / 单线程重试达到执行时间上限，已停止；请查看 diagnostic/。"
           elif [ "$RC" -ne 0 ]; then
             echo "::error::The single-thread retry also failed; see diagnostic/. / 单线程重试仍失败；请查看 diagnostic/。"
           fi
@@ -701,6 +725,14 @@ jobs:
       - name: Finalize compile result / 确认编译结果
         if: always()
         run: |
+          if [ "${{ steps.compile.outcome }}" = "cancelled" ] || [ "${{ steps.diagnose.outcome }}" = "cancelled" ]; then
+            echo "::warning::Compilation was interrupted; retry may not have run. / 编译已中断；重试不一定已执行。"
+            exit 0
+          fi
+          if [ "${{ steps.compile.outputs.exit_code }}" = "124" ] || [ "${{ steps.diagnose.outputs.exit_code }}" = "124" ]; then
+            echo "::error::Build execution time exhausted, not a proven package failure; download BUILD-LOGS. / 构建执行超时，不能据此认定插件不兼容；请下载 BUILD-LOGS。"
+            exit 1
+          fi
           if [ "${{ steps.compile.outcome }}" = "success" ]; then
             echo "Parallel compile succeeded / 并行编译成功"
             exit 0
@@ -720,11 +752,15 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          echo "::error::Both parallel compilation and the single-thread retry failed; download BUILD-LOGS. / 并行与单线程编译均失败；请下载 BUILD-LOGS。"
+          if [ "${{ steps.diagnose.outcome }}" = "skipped" ] || [ -z "${{ steps.diagnose.outcome }}" ]; then
+            echo "::error::Parallel compilation failed; the single-thread retry did not run. / 并行编译失败，单线程重试未执行。"
+          else
+            echo "::error::Both parallel compilation and the single-thread retry failed; download BUILD-LOGS. / 并行与单线程编译均失败；请下载 BUILD-LOGS。"
+          fi
           exit 1
 
       - name: Collect failure logs / 收集失败日志
-        if: failure() || steps.compile.outcome == 'failure'
+        if: always() && (failure() || cancelled() || steps.compile.outcome == 'failure')
         run: |
           mkdir -p failure-logs
           cp download.log failure-logs/ 2>/dev/null || true
@@ -751,18 +787,33 @@ jobs:
             FINAL_RESULT="FAILED AFTER COMPILE"
           elif [ "$PARALLEL_OUTCOME" = "failure" ]; then
             PARALLEL_RESULT="FAILED"
+            if [ "$PARALLEL_EXIT" = "124" ]; then
+              PARALLEL_RESULT="TIMEOUT"
+              if [ "${{ steps.compile.outputs.command_started }}" = "false" ]; then
+                PARALLEL_RESULT="NOT STARTED (TIME BUDGET EXHAUSTED)"
+              fi
+              FINAL_RESULT="EXECUTION TIMEOUT"
+            fi
             if [ "$DIAGNOSTIC_EXIT" = "0" ]; then
               DIAGNOSTIC_RESULT="SUCCEEDED"
               FINAL_RESULT="RECOVERED"
             elif [ "$DIAGNOSTIC_EXIT" = "124" ]; then
               DIAGNOSTIC_RESULT="TIMEOUT"
+              if [ "${{ steps.diagnose.outputs.command_started }}" = "false" ]; then
+                DIAGNOSTIC_RESULT="NOT RUN (TIME BUDGET EXHAUSTED)"
+              fi
+              FINAL_RESULT="EXECUTION TIMEOUT"
             elif [ -n "$DIAGNOSTIC_EXIT" ]; then
               DIAGNOSTIC_RESULT="FAILED"
             elif [ "$DIAGNOSTIC_OUTCOME" = "failure" ]; then
               DIAGNOSTIC_RESULT="FAILED"
             elif [ "$DIAGNOSTIC_OUTCOME" = "cancelled" ]; then
               DIAGNOSTIC_RESULT="CANCELLED"
+              FINAL_RESULT="INTERRUPTED"
             fi
+          elif [ "$PARALLEL_OUTCOME" = "cancelled" ]; then
+            PARALLEL_RESULT="CANCELLED"
+            FINAL_RESULT="INTERRUPTED"
           fi
 
           ROOTFS_PARTSIZE="$(sed -n 's/^CONFIG_TARGET_ROOTFS_PARTSIZE=//p' failure-logs/final.config 2>/dev/null | tail -n 1 | tr -d '\r')"

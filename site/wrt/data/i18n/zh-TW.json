@@ -553,7 +553,7 @@
   "runtime.2be977a1c305": "項目",
   "runtime.0204d291b0db": "目前值",
   "runtime.c2e92eeeb4e6": "路徑",
-  "runtime.0e8a6d518ade": "這個值決定 RootFS 分區上限。基礎系統、相依套件與所選軟體包都會佔用空間；如果建置日誌出現 ext4 out of space，請增大此值後重建。",
+  "runtime.0e8a6d518ade": "RootFS 分割區須容納基礎系統、相依套件與所選軟體。ext4 依未壓縮內容配置，SquashFS 壓縮檔大小不等於所需 ext4 容量。套件大小未知時，估算並非總容量；遇到 ext4 out of space 請增大分割區後重新編譯。",
   "runtime.36463e27a8e1": "關閉",
   "runtime.2195ea1653d1": "去修改",
   "runtime.2b2a5917809a": "查看 RootFS 容量與修改位置",

@@ -31,11 +31,20 @@ try {
     }
     await waitFor('Source controls', () => evaluate(`() => document.getElementById('targetSource')?.options.length > 0`), 60000);
     const payload = JSON.parse(readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
-    await evaluate(`async (payload, name) => {
-      await importConfigFile(new File([JSON.stringify(payload)], name, { type: 'application/json' }));
+    console.log('[compatibility-browser] importing ' + id + ' ' + basename(file));
+    await evaluate(`(payload, name) => {
+      globalThis.__compatibilityImport = { status: 'pending' };
+      importConfigFile(new File([JSON.stringify(payload)], name, { type: 'application/json' }))
+        .then(() => { __compatibilityImport.status = 'complete'; })
+        .catch(error => { __compatibilityImport = { status: 'failed', error: error.message }; });
       return true;
     }`, [payload, basename(file)]);
+    await waitFor('uploaded configuration import', () => evaluate(`() => {
+      if (__compatibilityImport.status === 'failed') throw Error(__compatibilityImport.error);
+      return __compatibilityImport.status === 'complete';
+    }`), 120000);
     await ready();
+    console.log('[compatibility-browser] loaded Native configuration ' + id);
     await evaluate(`async () => { await ensureCatalogMenuLoaded(true); await ensureCatalogHiddenLoaded(); return true; }`);
     const initial = await evaluate(`async (document, hash, id) => {
       const loaded = { ...(await CATALOG_LOADER.fetchCompatibility()), compatibility: document, hash };
@@ -66,9 +75,13 @@ try {
         ...(plans.recommended.requiredTargets || []), ...(plans.recommended.retainedTargets || [])] };
       globalThis.__compatibilityResult = null;
       withUiOperation('warning regression', () => withUiOperationInteraction(() =>
-        openCompatibilityWarningModal(evaluation, warning, plans)))
+        openBuildWarningModal(buildWarningEvaluation(loaded))))
         .then(action => { globalThis.__compatibilityResult = action; });
+      const unified = buildWarningEvaluation(loaded);
       return { source: state.source.id, branch: state.version.branch, steps: plans.recommended.steps,
+        review: { native: unified.initialViolations.map(row => ({ code: row.code, symbol: row.symbol })),
+          rules: unified.compatibility.warnings.map(row => row.rule.id), actions: unified.actions.map(row => ({ symbol: row.symbol, value: row.value })),
+          unresolved: unified.unresolved },
         retained: plans.recommended.retainedTargets || [] };
     }`, [document, sha256, id]);
     for (const theme of ['light', 'dark']) {
@@ -91,9 +104,13 @@ try {
     }
     const screenshot = await browser.connection.command('Page.captureScreenshot', { format: 'png' });
     writeFileSync(join(output, id + '-phone.png'), Buffer.from(screenshot.data, 'base64'));
+    console.log('[compatibility-browser] review=' + JSON.stringify(initial));
     await evaluate(`() => { document.querySelector('#modalBody .compatibility-recommended').click(); return true; }`);
-    await waitFor('recommendation transaction settled', () => evaluate(`() =>
-      document.querySelector('#modalBody .compatibility-recommendation')?.classList.contains('is-applied')`), 60000);
+    await waitFor('recommendation transaction settled', () => evaluate(`() => {
+      const warning = [...$('modalBody').querySelectorAll('.catalog-conflict-warning')].at(-1)?.textContent;
+      if (warning) throw Error('Recommendation rejected: ' + warning);
+      return document.querySelector('#modalBody .compatibility-recommendation')?.classList.contains('is-applied');
+    }`), 60000);
     assert(await evaluate(`() => !$('modal').hidden && $('app').getAttribute('aria-busy') === 'false' &&
       !document.body.classList.contains('ui-operation-busy') &&
       $('modalBody').querySelector('.configuration-continue') &&

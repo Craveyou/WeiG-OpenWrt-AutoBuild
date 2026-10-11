@@ -195,12 +195,10 @@ runtime.menuTouched.add('PACKAGE_complete'); runtime.menuTouched.add('PACKAGE_co
 runtime.catalogUserOverrides.set('PACKAGE_complete', 'y'); runtime.catalogUserOverrides.set('PACKAGE_consumer', 'y');
 runtime.markCatalogStateChanged();
 const providerEvaluation = runtime.configurationPreflightEvaluation();
-assert(providerEvaluation.actions.some(action => action.symbol === 'PACKAGE_minimal'),
-  'APK provider recommendation points to the wrong participant');
-runtime.applyConfigurationRecommendation(providerEvaluation);
-assert(runtime.menuValues.get('PACKAGE_minimal') === 'n' && runtime.menuValues.get('PACKAGE_complete') === 'y' &&
-  runtime.configurationPreflightEvaluation().initialViolations.length === 0,
-  'actual recommendation replay failed or resurrected the incompatible native provider');
+assert(providerEvaluation.initialViolations.length === 0 && providerEvaluation.actions.length === 0,
+  'native consistency review must not recreate a parallel installation-failure cancellation mechanism');
+assert(CATALOG_ENGINE.validateConfig(runtime.CATALOG_MODEL, runtime.menuValues)
+  .some(row => row.code === 'package-conflict'), 'retiring duplicate UI must not delete Catalog installation facts');
 
 const defaultRows = [
   { configSymbol: 'OWNER', kconfigSymbol: 'OWNER', type: 'bool', states: ['n', 'y'] },
@@ -269,4 +267,64 @@ for (let cycle = 0; cycle < 3; cycle++) {
   assert(runtime.catalogConditionalDefaultSymbols.has('CHOICE_FIRST') && !runtime.menuTouched.has('CHOICE_FIRST'),
     'disabled native choice default lost ownership or became a user assignment');
 }
-console.log('menuconfig direct-Intent and typed/choice default lifecycle replay passed');
+// One review combines native stale states with scoped installation evidence.
+// An unrecorded missing backend remains a Catalog fact, not an extra UI ban.
+const warningRows = [
+  { configSymbol: 'OWNER', type: 'bool', states: ['n', 'y'] },
+  { configSymbol: 'STALE', type: 'bool', states: ['n', 'y'], kconfig: { dependsExpressions: [['OWNER']] } },
+  ...['frontend', 'safe', 'shared'].map(packageName => ({ kind: 'package', package: packageName,
+    configSymbol: `PACKAGE_${packageName}`, kconfigSymbol: `PACKAGE_${packageName}`,
+    type: 'tristate', states: ['n', 'm', 'y'], canDisable: true,
+    kconfig: packageName === 'shared' ? {} : { selectsExpressions: [['PACKAGE_shared']] },
+    packageInfo: { depends: packageName === 'frontend' ? ['+missing-backend'] : [] } })),
+];
+runtime.CATALOG_MODEL = CATALOG_ENGINE.createCatalogModel({ schema: 5, targets: [], relations: {
+  schema: 2, records: warningRows, indexes: {} } });
+runtime.menuOptionBySymbol = new Map(warningRows.map(row => [row.configSymbol, { ...row, symbol: row.configSymbol }]));
+runtime.menuSearchOptions = [...runtime.menuOptionBySymbol.values()];
+runtime.menuValues = new Map([['OWNER', 'n'], ['STALE', 'y'], ['PACKAGE_frontend', 'y'],
+  ['PACKAGE_safe', 'y'], ['PACKAGE_shared', 'y']]);
+runtime.ACTIVE_PROFILE_BASELINE = { values: new Map(runtime.menuValues) };
+runtime.catalogBaselineValues = new Map(runtime.menuValues);
+for (const collection of [runtime.menuTouched, runtime.catalogConditionalDefaultSymbols,
+  runtime.catalogDependencySymbols, runtime.catalogUserOverrides, runtime.catalogImportedSymbols,
+  runtime.catalogRecommendedValues, runtime.menuImportedOriginal]) collection.clear();
+runtime.catalogUserOverrides.set('OWNER', 'n'); runtime.menuTouched.add('OWNER');
+runtime.catalogUserOverrides.set('PACKAGE_frontend', 'y'); runtime.menuTouched.add('PACKAGE_frontend');
+runtime.catalogUserOverrides.set('PACKAGE_safe', 'y'); runtime.menuTouched.add('PACKAGE_safe');
+runtime.state.device.target = { system: 'x86', subtarget: '64', profileSymbol: 'DEVICE_generic' };
+runtime.selectedCatalogSource = () => ({ id: 'example' });
+runtime.selectedCatalogBranch = () => ({ branch: 'main', commit: 'a'.repeat(40) });
+runtime.MENU_CATALOG = { source: { id: 'example', branch: 'main', commit: 'a'.repeat(40), inputsHash: 'b'.repeat(64) } };
+runtime.markCatalogStateChanged();
+const scopedRule = { id: 'BLD-TEST', issue: 'build-failure', match: 'all-installed', scope: { example: ['main'] },
+  sourceCommits: ['a'.repeat(40)], inputHashes: ['b'.repeat(64)],
+  targetScope: { system: ['x86'], subtarget: ['64'], profile: ['DEVICE_generic'] },
+  packages: ['frontend'], refs: ['test:1'],
+  failure: { phase: 'rootfs-install', cause: 'dependency-caused', code: 'missing-package-dependencies',
+    observed: { missingDependencies: ['missing-backend'] } } };
+const loadedWarning = { compatibility: { schema: 7, rules: [scopedRule] }, hash: 'c'.repeat(64) };
+const combined = runtime.buildWarningEvaluation(loadedWarning);
+assert(runtime.buildWarningCount(combined) === 2 && combined.compatibility.warnings.length === 1 &&
+  combined.initialViolations.length === 1, 'native and evidence issues must share one deduplicated review');
+assert(runtime.forcedConfigurationAudit(combined)?.forced.length === 1 &&
+  runtime.forcedCompatibilityAudit(combined.compatibility, new Set(['BLD-TEST'])).forced[0] === 'BLD-TEST',
+  'force must preserve both established audit formats');
+assert(runtime.menuValues.get('PACKAGE_frontend') === 'y', 'review planning must not mutate user choices');
+runtime.applyBuildWarningRecommendation(combined);
+assert(runtime.catalogUserOverrides.get('PACKAGE_frontend') !== 'y',
+  'an approved compatibility cancellation must replace the imported/explicit Y, not only change display values');
+assert(runtime.menuValues.get('PACKAGE_frontend') === 'n' && runtime.menuValues.get('STALE') === 'n' &&
+  runtime.menuValues.get('PACKAGE_safe') === 'y' && runtime.menuValues.get('PACKAGE_shared') === 'y' &&
+  runtime.buildWarningCount(runtime.buildWarningEvaluation(loadedWarning)) === 0,
+  'combined recommendation must converge and preserve the surviving shared consumer');
+for (const change of [{ sourceId: 'other' }, { branchName: 'next' }, { sourceCommit: 'f'.repeat(40) },
+  { inputsHash: 'f'.repeat(64) }, { targetSubtarget: '32' }]) {
+  assert(CATALOG_ENGINE.evaluateCompatibilityRules(runtime.CATALOG_MODEL, loadedWarning.compatibility,
+    combined.context.values, { ...combined.compatibility.context, ...change }).warnings.length === 0,
+    'evidence rule escaped its exact scope');
+}
+const moduleValues = new Map(combined.context.values); moduleValues.set('PACKAGE_frontend', 'm');
+assert(CATALOG_ENGINE.evaluateCompatibilityRules(runtime.CATALOG_MODEL, loadedWarning.compatibility,
+  moduleValues, combined.compatibility.context).warnings.length === 0, 'RootFS installation rule must not ban M');
+console.log('menuconfig direct-Intent, typed/choice lifecycle and unified warning replay passed');

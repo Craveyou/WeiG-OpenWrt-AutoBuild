@@ -128,13 +128,43 @@ expect(workflow.includes('make -j"$JOBS" BUILD_LOG=1'), 'parallel compile must e
 expect(parallelSnapshotAt >= 0 && diagnoseAt > parallelSnapshotAt, 'parallel snapshot must happen before diagnostic retry');
 expect(workflow.slice(parallelSnapshotAt, diagnoseAt).includes('rm -rf "$GITHUB_WORKSPACE/openwrt/logs"'), 'OpenWrt log directory must reset only after parallel evidence is frozen');
 expect(workflow.includes('timeout-minutes: 185'), 'diagnostic workflow step must allow 185 minutes');
-expect(workflow.includes('timeout 180m stdbuf -oL -eL make -j1 V=s BUILD_LOG=1'), 'diagnostic shell timeout must be 180 minutes');
-expect(workflow.includes("if: failure() || steps.compile.outcome == 'failure'"), 'BUILD-LOGS must be collected even when single-thread retry recovers');
+expect(workflow.includes('LIMIT=$(( REMAINING < 180 * 60 ? REMAINING : 180 * 60 ))'), 'retry budget must fit within the job deadline and 180-minute ceiling');
+expect(workflow.includes('timeout --kill-after=30s "${LIMIT}s"'), 'retry must be stopped before evidence reserve is exhausted');
+expect(workflow.includes('335 * 60') && workflow.includes('timeout --kill-after=30s "${REMAINING}s"'), 'parallel compile must reserve time for evidence/artifacts');
+expect(workflow.includes("if: always() && (failure() || cancelled() || steps.compile.outcome == 'failure')"), 'BUILD-LOGS must also be collected on interruption and recovered compile failure');
+expect(workflow.includes("steps.compile.outcome == 'cancelled'") && workflow.includes('FINAL_RESULT="INTERRUPTED"'), 'interrupted builds must preserve detailed evidence and distinguish cancellation');
+expect(workflow.includes('single-thread retry did not run') && workflow.includes('FINAL_RESULT="EXECUTION TIMEOUT"'), 'never claim an unexecuted retry failed, or attribute timeout to a package');
 expect(workflow.includes('FINAL_RESULT="RECOVERED"'), 'summary must distinguish recovered builds');
 expect(workflow.includes('DIAGNOSTIC_RESULT="TIMEOUT"'), 'summary must distinguish diagnostic timeout');
 expect(workflow.includes('request branch') && workflow.includes('workflow branch'), 'summary/metadata must expose request and workflow identities');
 expect(workflow.includes('parallel/') && workflow.includes('diagnostic/'), 'summary must point to separated stage directories');
 expect(!workflow.includes('tar czf "$LOGS/package-logs.tar.gz" -C openwrt logs'), 'artifact classifier must not overwrite stage-specific package-log archives');
 expect(!/oscam|elfutils|package\/gcc|x86_64/i.test(readFileSync(helper, 'utf8')), 'diagnostic helper must not contain package/source/device special cases');
+// Execute the real finalizer, not a duplicate decision table implementation.
+const finalizer = workflow.slice(workflow.indexOf('      - name: Finalize compile result'),
+  workflow.indexOf('      - name: Collect failure logs')).split('        run: |\n')[1]
+  .split('\n').map(line => line.slice(10)).join('\n');
+for (const [parallel, retry, parallelExit, retryExit, expectedExit, expectedText] of [
+  ['success', 'skipped', '0', '', 0, 'Parallel compile succeeded'],
+  ['skipped', 'skipped', '', '', 0, 'Compile was not started'],
+  ['failure', 'success', '2', '0', 0, 'single-thread retry succeeded'],
+  ['failure', 'failure', '2', '2', 1, 'Both parallel compilation'],
+  ['failure', 'skipped', '2', '', 1, 'single-thread retry did not run'],
+  ['cancelled', 'skipped', '', '', 0, 'Compilation was interrupted'],
+  ['failure', 'cancelled', '2', '', 0, 'Compilation was interrupted'],
+  ['failure', 'skipped', '124', '', 1, 'Build execution time exhausted'],
+  ['failure', 'failure', '2', '124', 1, 'Build execution time exhausted'],
+]) {
+  const variables = { 'steps.compile.outcome': parallel, 'steps.diagnose.outcome': retry,
+    'steps.compile.outputs.exit_code': parallelExit, 'steps.diagnose.outputs.exit_code': retryExit };
+  const script = finalizer.replace(/\$\{\{\s*([^}]+?)\s*\}\}/g, (_, key) => variables[key] ?? '');
+  const result = spawnSync('bash', ['-c', script], { cwd: ROOT, encoding: 'utf8',
+    env: { ...process.env, GITHUB_STEP_SUMMARY: '/dev/null' } });
+  expect(result.status === expectedExit && result.stdout.includes(expectedText),
+    `finalizer ${parallel}/${retry}/${parallelExit}/${retryExit}: ${result.stdout} ${result.stderr}`);
+  if (retry === 'skipped' || parallelExit === '124' || retryExit === '124') {
+    expect(!result.stdout.includes('Both parallel compilation'), 'unexecuted/timed-out retry must never be reported as a second package failure');
+  }
+}
 
 console.log('Build diagnostics tests passed.');

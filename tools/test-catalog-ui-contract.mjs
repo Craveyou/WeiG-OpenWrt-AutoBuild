@@ -205,8 +205,8 @@ expect(app.includes('const previewPlugins = previewSelection.normal.map') &&
   buildAuditContract.includes('compatibility?.forced?.length') &&
   buildAuditContract.includes('compatibility: preflight.compatibility') &&
   schema6BuildContract.includes('audit: buildAudit(preflight)') &&
-  app.includes('CATALOG_ENGINE.evaluateNormalizedCompatibilityRules(') &&
-  app.includes('CATALOG_MODEL, evaluation.document, values, evaluation.context') &&
+  app.includes('evaluateLoadedCompatibility(loaded, values).warnings.find') &&
+  app.includes('buildWarningCount(buildWarningEvaluation(evaluation.loaded))') &&
   !app.includes('schema: compatibilitySchema, rules: [warning.rule]'),
   'build preflight must precede final schema6 selection/config/overrides/payload, import must stay modal-free, and audit must retain configuration plus compatibility');
 
@@ -283,19 +283,17 @@ expect(app.includes('const sameSnapshot = /^[a-f0-9]{40}$/.test(revision) && rev
   app.includes('payload.__catalogMigration = restored.migration'),
   'schema6 import must migrate explicit plugins on the current Catalog, recalculate dependencies, and expose skipped/conflicting values');
 
-expect(app.includes('const recommendationSteps = plans.recommended?.steps?.length') &&
-  app.includes('const recommendationTargets = plans.recommended?.requiredTargets?.length') &&
-  app.includes('const recommendationActions = [...recommendationSteps]') &&
-  app.includes('plans.recommended?.automaticChanges || []') &&
-  app.includes("t('runtime.3a95242a9e37', { value1: recommendationTargetNames.join(' → ') })") &&
-  app.includes("t('menu.automaticLinkage', {") &&
-  app.includes('for (const step of recommendationActions) {') &&
-  app.includes('requiredTargets: [...recommendationTargets, ...retainedTargets]') &&
-  app.includes('const retainedTargets = plans.recommended?.retainedTargets || []') &&
-  app.includes('compatibilityTargetsResolved(requiredTargets)') &&
+expect(app.includes('function buildWarningEvaluation(loaded)') &&
+  app.includes('const steps = plan.steps?.length') &&
+  app.includes('plan.requiredTargets || []') &&
+  app.includes('plan.retainedTargets || []') &&
+  app.includes('compatibilityTargetsResolved(evaluation.retainedTargets)') &&
   app.includes('applyCatalogIntent(menuOptionBySymbol.get(step.symbol) || { symbol: step.symbol },') &&
-  !app.includes('warning.records.find((item) => item.configSymbol === plans.recommended.symbol)'),
-  'compatibility recommendation UI stopped consuming the shared ordered Kconfig plan');
+  app.includes('openBuildWarningModal(evaluation)') &&
+  !app.includes('openConfigurationPreflightModal') && !app.includes('openCompatibilityWarningModal') &&
+  !app.includes('async function ensureConfigurationPreflight()') &&
+  !app.includes('async function ensureCompatibilityRules()'),
+  'single warning review must retire duplicate modals while consuming shared ordered Kconfig plans');
 
 const defconfigTogglePosition = html.indexOf('id="defconfigToggle"');
 const menuconfigHeaderPosition = html.indexOf('<div class="menuconfig-header">');
@@ -308,8 +306,8 @@ expect(!uiSession.includes('compatibilityRememberDefault') &&
   app.includes('checked: false,') &&
   !app.includes('本页默认记住强制兼容选择') &&
   !app.includes('getRememberDefault') && !app.includes('setRememberDefault') &&
-  app.includes("finish(rememberInput.checked ? 'forced-remember' : 'forced')") &&
-  app.includes('remembered.size === forced.size') &&
+  app.includes("finish(remember.input.checked ? 'forced-remember' : 'forced')") &&
+  app.includes("action === 'forced-remember' && compatibility && !configuration") &&
   app.includes("tooltipBody: t('runtime.e8bd8b88ed27')") &&
   i18nSource.includes('Valid only on this page. Refreshing or reopening the page, or clearing site data, resets it.') &&
   !app.includes('wrt_compatibility_remember') && !uiSession.includes('localStorage') &&

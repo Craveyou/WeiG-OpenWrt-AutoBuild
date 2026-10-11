@@ -110,5 +110,10 @@ try {
   const review = createUiConfigurationReview({ title: 'Before → after', changes: [{ symbol: 'APP', from: 'y', to: 'n' }],
     formatSymbol: value => value, formatValue: value => value.toUpperCase(), formatKind: () => 'Explicit' });
   assert.equal(review.children[1].children[1].text, 'Y → N');
+  const folded = createUiConfigurationReview({ title: 'Review', automaticTitle: 'Automatic',
+    changes: [{ symbol: 'APP', from: 'y', to: 'n' }, { symbol: 'SHARED', from: 'y', to: 'n', automatic: true }],
+    formatSymbol: value => value, formatValue: value => value.toUpperCase(), formatKind: () => 'Change' });
+  assert.equal(folded.children[2].tag, 'details'); assert(!folded.children[2].open);
+  assert.equal(folded.children[2].children[0].text, 'Automatic · 1');
 } finally { delete globalThis.document; }
 console.log('shared UI module contracts and N/M/Y presentation behavior passed');

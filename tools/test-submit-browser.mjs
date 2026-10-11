@@ -13,6 +13,8 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const directory = mkdtempSync(join(tmpdir(), 'weig-submit-browser-'));
 const sources = process.argv.slice(2).length ? process.argv.slice(2) : ['iStoreOS', 'Lienol', 'OpenWrt', 'ImmortalWrt', 'lede', 'hanwckf'];
 const explicitTheme = process.env.WEIG_SUBMIT_THEME === 'explicit';
+const stagedCompatibility = process.env.WEIG_COMPATIBILITY_FILE
+  ? JSON.parse(readFileSync(process.env.WEIG_COMPATIBILITY_FILE, 'utf8')) : null;
 const preview = await startPreview();
 let browser;
 const requests = [];
@@ -43,6 +45,10 @@ try {
       return true;
     }`, [source]);
     await ready(source);
+    if (stagedCompatibility) await evaluate(`document => {
+      const fetch = CATALOG_LOADER.fetchCompatibility.bind(CATALOG_LOADER);
+      CATALOG_LOADER.fetchCompatibility = async (...args) => ({ ...(await fetch(...args)), compatibility: document });
+    }`, [stagedCompatibility]);
     // Prefer a real generic x86 profile where the source provides one. Sources
     // without x86 keep their Native default Profile; no fabricated target data.
     await evaluate(`async () => {
@@ -143,8 +149,8 @@ try {
         applyCatalogIntent(option, 'y', false, 'user'); renderCatalogUiAfterIntent();
         openSubmitModal(); document.querySelectorAll('#modalBody .method-card button')[2].click();
       }`);
-      await waitFor('real configuration preflight', () => evaluate(`() =>
-        !$('modal').hidden && $('modalTitle').textContent === t('runtime.configurationPreflightTitle')`), 60000);
+      await waitFor('unified build warning review', () => evaluate(`() =>
+        !$('modal').hidden && $('modalTitle').textContent === t('compatibility.warningTitle')`), 60000);
       const review = await evaluate(`() => {
         const buttons = [...$('modalBody').querySelectorAll('.catalog-conflict-state button')];
         return { y: buttons.find(button => button.dataset.value === 'y')?.className,
@@ -170,12 +176,13 @@ try {
       }, 60000);
       assert.doesNotMatch(readFileSync(reviewedPath, 'utf8'), /^CONFIG_PACKAGE_luci-app-baidupcs-web=y$/m);
       // Closing an applied review is cancellation, never an implicit submit.
-      await evaluate(`() => {
+      await evaluate(`async () => {
         restoreCatalogUiState(__reviewBaseline); renderCatalogUiAfterIntent(); closeModal();
         applyCatalogIntent(menuOptionBySymbol.get('PACKAGE_luci-app-baidupcs-web'), 'y', false, 'user');
+        globalThis.__reviewLoaded = (await loadCompatibilityEvaluation()).loaded;
         globalThis.__reviewResult = null;
         withUiOperation('review regression', () => withUiOperationInteraction(() =>
-          openConfigurationPreflightModal(configurationPreflightEvaluation())))
+          openBuildWarningModal(buildWarningEvaluation(__reviewLoaded))))
           .then(action => { globalThis.__reviewResult = action; });
       }`);
       await waitFor('custom review visible', () => evaluate(`() =>
@@ -190,8 +197,25 @@ try {
       await evaluate(`() => closeModal()`);
       await waitFor('applied review cancellation', () => evaluate(`() => __reviewResult === 'cancel' && !activeUiOperation`), 60000);
       await evaluate(`() => { restoreCatalogUiState(__reviewBaseline); renderCatalogUiAfterIntent(); }`);
+      await evaluate(`() => {
+        applyCatalogIntent(menuOptionBySymbol.get('PACKAGE_luci-app-baidupcs-web'), 'y', false, 'user');
+        globalThis.__forceBefore = buildFinalConfigText(); globalThis.__forceResult = null;
+        withUiOperation('force regression', () => ensureBuildPreflight())
+          .then(result => { globalThis.__forceResult = result; });
+      }`);
+      await waitFor('force warning review', () => evaluate(`() =>
+        !$('modal').hidden && $('modalTitle').textContent === t('compatibility.warningTitle')`), 60000);
+      await evaluate(`() => $('modalBody').querySelector('.compatibility-force').click()`);
+      await evaluate(`() => $('modalBody').querySelector('.compatibility-force-confirm').click()`);
+      await waitFor('force preserves native intent', () => evaluate(`() => __forceResult && !activeUiOperation`), 60000);
+      assert(await evaluate(`() => __forceResult.compatibility?.forced.includes('BLD-0015') &&
+        !__forceResult.configuration && __forceResult.config === __forceBefore &&
+        menuValues.get('PACKAGE_luci-app-baidupcs-web') === 'y'`),
+        'force must retain Y and the exact config, with compatibility audit instead of a duplicate provider audit');
+      await evaluate(`() => { UI_SESSION.compatibility.clearAcknowledgement();
+        restoreCatalogUiState(__reviewBaseline); renderCatalogUiAfterIntent(); }`);
       await browser.connection.command('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: directory });
-      console.log('[submit-browser] real provider-absent Y/N states, preview, explicit confirmation, custom review and cancellation passed');
+      console.log('[submit-browser] Catalog-evidence Y/N states, preview, explicit confirmation, custom review and cancellation passed');
     }
     // Third method: actual .config download from the same configuration builder.
     const configBefore = new Set(readdirSync(directory));

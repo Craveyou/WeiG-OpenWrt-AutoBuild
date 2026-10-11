@@ -92,16 +92,25 @@ export function createUiKconfigStateControl({ type, value, constraints, classNam
   return root;
 }
 
-export function createUiConfigurationReview({ title, changes = [], formatSymbol, formatValue, formatKind } = {}) {
+export function createUiConfigurationReview({ title, changes = [], automaticTitle, formatSymbol, formatValue, formatKind } = {}) {
   const section = document.createElement('section'); section.className = 'configuration-review';
   const heading = document.createElement('strong'); heading.textContent = title; section.appendChild(heading);
-  for (const change of changes) {
+  const appendRow = (host, change) => {
     const row = document.createElement('div'); row.className = 'configuration-review-row';
     const name = document.createElement('code'); name.textContent = formatSymbol(change.symbol);
     const values = document.createElement('span');
     values.textContent = `${formatValue(change.from)} → ${formatValue(change.to)}`;
     const kind = document.createElement('small'); kind.textContent = formatKind(change);
-    row.append(name, values, kind); section.appendChild(row);
+    row.append(name, values, kind); host.appendChild(row);
+  };
+  for (const change of changes.filter(row => !automaticTitle || !row.automatic)) appendRow(section, change);
+  const automatic = automaticTitle ? changes.filter(row => row.automatic) : [];
+  if (automatic.length) {
+    const details = document.createElement('details'); details.className = 'configuration-review-automatic';
+    const summary = document.createElement('summary'); summary.textContent = `${automaticTitle} · ${automatic.length}`;
+    details.appendChild(summary);
+    for (const change of automatic) appendRow(details, change);
+    section.appendChild(details);
   }
   return section;
 }

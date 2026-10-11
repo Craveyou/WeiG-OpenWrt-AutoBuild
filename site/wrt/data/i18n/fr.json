@@ -553,7 +553,7 @@
   "runtime.2be977a1c305": "Item",
   "runtime.0204d291b0db": "Current",
   "runtime.c2e92eeeb4e6": "Path",
-  "runtime.0e8a6d518ade": "This value limits the RootFS partition. The base system, dependencies, and selected packages all consume space. Increase it and rebuild if the build log reports ext4 out of space.",
+  "runtime.0e8a6d518ade": "RootFS doit contenir le système de base, les dépendances et les logiciels choisis. ext4 stocke le contenu non compressé ; la taille compressée de SquashFS ne mesure pas la capacité ext4 requise. Les tailles inconnues rendent l’estimation incomplète. Si ext4 manque de place, agrandissez la partition et reconstruisez.",
   "runtime.36463e27a8e1": "Close",
   "runtime.2195ea1653d1": "Modify",
   "runtime.2b2a5917809a": "View RootFS capacity and where to modify it",

@@ -1,27 +1,27 @@
 {
-  "version": "v2610071550",
+  "version": "v2610111359",
   "timezone": "Asia/Shanghai",
-  "fingerprint": "fae033f37ec7f74a81cd0f43aaad59b2753e21a485e1b5f13ecd42a17d7fed70",
-  "siteSha256": "7c132693e04cf3ee28dbc3c83f7f682dd24d3f7c2a2c26762075b47589323296",
+  "fingerprint": "15179b58de3d47cad29baba3314eebfc09b2905eef00bcd752564c747ad97790",
+  "siteSha256": "f44d5ea21f33189fcdb50f162acb78898f394aeaa83f575b5ff318f4a7c3245b",
   "hashAlgorithm": "sha256",
   "catalogBindings": {
     "catalog-dev": {
       "channel": "catalog-dev",
       "repository": "weigefenxiang/WeiG-OpenWrt-Menuconfig-Catalog",
-      "codeSha": "a2bffa8061009c481250e49cc068c7e807536db2",
-      "assetRef": "a0894cc10da028bcfed353b409f017a9f93ab46b"
+      "codeSha": "1ab56c4cb96c9205ace2cc39c204c21cdf01f81d",
+      "assetRef": "c7fbce9fa7f33f192439c8b204426e8799317819"
     },
     "catalog-staging": {
       "channel": "catalog-staging",
       "repository": "weigefenxiang/WeiG-OpenWrt-Menuconfig-Catalog",
-      "codeSha": "384c57fb8fde6ad8aa02e4a6c9e2dab3f4a63c48",
-      "assetRef": "f1b0ed993ddefafb76532bddab28d67b601390a8"
+      "codeSha": "a2bffa8061009c481250e49cc068c7e807536db2",
+      "assetRef": "a0894cc10da028bcfed353b409f017a9f93ab46b"
     },
     "catalog-main": {
       "channel": "catalog-main",
       "repository": "weigefenxiang/WeiG-OpenWrt-Menuconfig-Catalog",
-      "codeSha": "384c57fb8fde6ad8aa02e4a6c9e2dab3f4a63c48",
-      "assetRef": "f1b0ed993ddefafb76532bddab28d67b601390a8"
+      "codeSha": "a2bffa8061009c481250e49cc068c7e807536db2",
+      "assetRef": "a0894cc10da028bcfed353b409f017a9f93ab46b"
     }
   }
 }

@@ -65,7 +65,7 @@ for (const name of businessNames) {
 const owners = new Map([
   ['lib/catalog/catalog-controller.js', ['function showCatalogStatus', 'async function loadCatalog']],
   ['lib/menuconfig/menuconfig-state.js', ['function applyCatalogIntent']],
-  ['lib/menuconfig/compatibility-controller.js', ['function openCompatibilityWarningModal']],
+  ['lib/menuconfig/compatibility-controller.js', ['function openBuildWarningModal']],
   ['lib/menuconfig/menuconfig-renderer.js', ['function renderMenuconfig']],
   ['lib/plugins/plugin-controller.js', ['function renderPlugin']],
   ['lib/config/config-state.js', ['function parseConfigEntries']],
